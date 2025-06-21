@@ -45,26 +45,27 @@ pub unsafe extern "C" fn entrypoint(mut input: *mut u8) -> u32 {
     );
     let num_accounts = num_accounts.assume_init();
 
-    use asmr_macro::{binary_tree_dispatch, entrypoint_process, entrypoint_process_batched};
+    use asmr_macro::{
+        binary_tree_dispatch, entrypoint_process, entrypoint_process_batched,
+        entrypoint_process_remainder,
+    };
 
-    if num_accounts > 16 {
+    if num_accounts > 64 {
         return u32::MAX;
     } else {
         #[cfg(target_os = "solana")]
         {
             let x = {
                 #[inline(always)]
-                |r1: *mut u8| {
-                    binary_tree_dispatch!(
-                        num_accounts,
-                        16,
-                        entrypoint_process,
-                        9,
-                        entrypoint_process_batched
-                    )
+                || {
+                    if num_accounts > 8 {
+                        entrypoint_process_batched!(num_accounts, 8);
+                    } else {
+                        binary_tree_dispatch!(num_accounts, 8, entrypoint_process);
+                    }
                 }
             };
-            x(input);
+            x();
         }
     }
 
@@ -89,7 +90,7 @@ pub unsafe extern "C" fn entrypoint(mut input: *mut u8) -> u32 {
 
     // sol_log_64(data.len() as u64, accounts.len() as u64, 0, 0, 0);
 
-    process(program_id, accounts, data)
+    core::hint::black_box(process(program_id, accounts, data))
 }
 
 #[inline(always)]

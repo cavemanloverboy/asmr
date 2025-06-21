@@ -9,10 +9,6 @@ struct DispatchInput {
     max: LitInt,
     _comma2: Token![,],
     callee: Ident,
-    _comma3: Token![,],
-    transition: LitInt,
-    _comma4: Token![,],
-    callee_upper: Ident,
 }
 
 impl Parse for DispatchInput {
@@ -23,10 +19,6 @@ impl Parse for DispatchInput {
             max: input.parse()?,
             _comma2: input.parse()?,
             callee: input.parse()?,
-            _comma3: input.parse()?,
-            transition: input.parse()?,
-            _comma4: input.parse()?,
-            callee_upper: input.parse()?,
         })
     }
 }
@@ -35,28 +27,18 @@ impl Parse for DispatchInput {
 pub fn binary_tree_dispatch(input: TokenStream) -> TokenStream {
     let DispatchInput {
         value_expr,
-        _comma1,
+        _comma1: _,
         max,
-        _comma2,
+        _comma2: _,
         callee,
-        _comma3,
-        transition,
-        _comma4,
-        callee_upper,
     } = parse_macro_input!(input as DispatchInput);
     let max_val = max
-        .base10_parse::<usize>()
-        .expect("Expected integer literal");
-
-    let transition_val = transition
         .base10_parse::<usize>()
         .expect("Expected integer literal");
 
     fn generate_tree(
         val_expr: &Expr,
         callee: &Ident,
-        callee_upper: &Ident,
-        transition: usize,
         low: usize,
         high: usize,
     ) -> proc_macro2::TokenStream {
@@ -65,33 +47,15 @@ pub fn binary_tree_dispatch(input: TokenStream) -> TokenStream {
         match range_size {
             1 => {
                 let call_lit = syn::LitInt::new(&low.to_string(), proc_macro2::Span::call_site());
-                if low >= transition {
-                    quote! {
+                quote! {
                         #callee!(#call_lit)
-                    }
-                } else {
-                    quote! {
-                        #callee_upper!(#call_lit)
-                    }
                 }
             }
             2 => {
                 let high_lit = syn::LitInt::new(&high.to_string(), proc_macro2::Span::call_site());
                 let low_lit = syn::LitInt::new(&low.to_string(), proc_macro2::Span::call_site());
-
-                // Determine at compile time which macro to call
-                let high_call = if high >= transition {
-                    quote! { #callee_upper!(#high_lit) }
-                } else {
-                    quote! { #callee!(#high_lit) }
-                };
-
-                let low_call = if low >= transition {
-                    quote! { #callee_upper!(#low_lit) }
-                } else {
-                    quote! { #callee!(#low_lit) }
-                };
-
+                let high_call = quote! { #callee!(#high_lit) };
+                let low_call = quote! { #callee!(#low_lit) };
                 quote! {
                     if #val_expr >= #high_lit {
                         #high_call
@@ -106,24 +70,9 @@ pub fn binary_tree_dispatch(input: TokenStream) -> TokenStream {
                     syn::LitInt::new(&(low + 1).to_string(), proc_macro2::Span::call_site());
                 let low_lit = syn::LitInt::new(&low.to_string(), proc_macro2::Span::call_site());
 
-                // Determine at compile time which macro to call
-                let high_call = if high >= transition {
-                    quote! { #callee_upper!(#high_lit) }
-                } else {
-                    quote! { #callee!(#high_lit) }
-                };
-
-                let mid_call = if (low + 1) >= transition {
-                    quote! { #callee_upper!(#mid_lit) }
-                } else {
-                    quote! { #callee!(#mid_lit) }
-                };
-
-                let low_call = if low >= transition {
-                    quote! { #callee_upper!(#low_lit) }
-                } else {
-                    quote! { #callee!(#low_lit) }
-                };
+                let high_call = quote! { #callee!(#high_lit) };
+                let mid_call = quote! { #callee!(#mid_lit) };
+                let low_call = quote! { #callee!(#low_lit) };
 
                 quote! {
                     if #val_expr >= #high_lit {
@@ -138,11 +87,8 @@ pub fn binary_tree_dispatch(input: TokenStream) -> TokenStream {
             _ => {
                 let mid = (low + high) / 2;
                 let mid_lit = syn::LitInt::new(&mid.to_string(), proc_macro2::Span::call_site());
-
-                let left_branch =
-                    generate_tree(val_expr, callee, callee_upper, transition, low, mid);
-                let right_branch =
-                    generate_tree(val_expr, callee, callee_upper, transition, mid + 1, high);
+                let left_branch = generate_tree(val_expr, callee, low, mid);
+                let right_branch = generate_tree(val_expr, callee, mid + 1, high);
 
                 quote! {
                     if #val_expr > #mid_lit {
@@ -155,14 +101,7 @@ pub fn binary_tree_dispatch(input: TokenStream) -> TokenStream {
         }
     }
 
-    let tree = generate_tree(
-        &value_expr,
-        &callee,
-        &callee_upper,
-        transition_val,
-        0,
-        max_val,
-    );
+    let tree = generate_tree(&value_expr, &callee, 0, max_val);
     quote!(#tree).into()
 }
 
@@ -243,145 +182,181 @@ pub fn entrypoint_process(input: TokenStream) -> TokenStream {
     result
 }
 
-#[proc_macro]
-pub fn entrypoint_process_batched(input: TokenStream) -> TokenStream {
-    let total = parse_macro_input!(input as LitInt)
-        .base10_parse::<usize>()
-        .unwrap();
-
-    let batch_size = 8;
-    let num_full_batches = total / batch_size;
-    let remainder = total % batch_size;
-
-    let mut output = quote! {};
-
-    // Generate unrolled code for each full batch
-    for batch_idx in 0..num_full_batches {
-        eprintln!("working on batch {} for {} batched", batch_idx, total);
-        let is_first_batch = batch_idx == 0;
-        let batch_code = generate_inlined_batch(batch_size, is_first_batch);
-        output = quote! {
-            #output
-            // Batch #batch_idx
-            #batch_code
-        };
-    }
-
-    // Generate code for remainder if any
-    if remainder > 0 {
-        eprintln!("working on remainder batch for {} batched", total);
-        let is_first_batch = num_full_batches == 0;
-        let remainder_code = generate_inlined_batch(remainder, is_first_batch);
-        output = quote! {
-            #output
-            // Remainder (#remainder accounts)
-            #remainder_code
-        };
-    }
-
-    let result = quote! {{
-        #output
-    }};
-    result.into()
+/// entrypoint_process_batched!(num_accounts, batch_size)
+struct BatchedInput {
+    total_expr: Expr,
+    _comma: Token![,],
+    batch_size: LitInt,
 }
 
-// Generate the fully inlined code for a batch of `count` accounts
-fn generate_inlined_batch(count: usize, is_first_batch: bool) -> proc_macro2::TokenStream {
-    generate_account_tree(count, count, is_first_batch)
+impl Parse for BatchedInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(BatchedInput {
+            total_expr: input.parse()?,
+            _comma: input.parse()?,
+            batch_size: input.parse()?,
+        })
+    }
 }
 
-// Recursively generate the account processing tree with both dup and nondup branches
+/// Shared tree generator: `suppress_return = true` for batch-trees,
+/// `false` for the final (remainder) tree that should `return`.
 fn generate_account_tree(
     remaining: usize,
     total: usize,
     is_first_in_program: bool,
+    suppress_return: bool,
 ) -> proc_macro2::TokenStream {
+    // Base: no more accounts
     if remaining == 0 {
-        // Base case - no more accounts to process in this batch
-        return quote! {
-            // Batch complete
-            return
-        };
-    }
-
-    let is_first_account = is_first_in_program && remaining == total;
-    let next_tree = generate_account_tree(remaining - 1, total, is_first_in_program);
-
-    if is_first_account {
-        // First account optimization - no dup check needed
-        quote! {
-            //#[cfg(target_os = "solana")]
-            core::arch::asm! {
-                // FIRST ACCOUNT - Store account ptr and load account data len
-                "stxdw [r7 + 0], r1",
-                "ldxdw r8, [r1 + 80 + 8]",
-                // Advance input cursor by static data, account data, and round up to next 8
-                "add64 r1, {account_total}",
-                "add64 r1, r8",
-                "and64 r1, 0xFFFFFFFFFFFFFFF8",
-                // Move to next account slot
-                "add64 r7, 8",
-
-                account_total = const TOTAL_ACCOUNT_DATA_TO_SKIP,
-                options(nostack),
-            };
-
-            // Continue with remaining accounts
-            #next_tree
+        if suppress_return {
+            quote! { /* batch complete, continue */ }
+        } else {
+            quote! {
+                // Batch complete
+                return
+            }
         }
     } else {
-        // Regular account with dup check - BOTH branches get the full remaining tree
-        quote! {
-            //#[cfg(target_os = "solana")]
-            core::arch::asm! {
-                // Load dup marker and check
-                "ldxb r3, [r1 + 8]",
-                "jne r3, 255, {dup}",
-                dup = label {
-                    unsafe {
-                        // DUP PATH
-                        //#[cfg(target_os = "solana")]
-                        core::arch::asm! {
-                            // Load index byte
-                            "ldxb r3, [r1 + 0]",
-                            // Calculate index, load account into r3
-                            "mul64 r3, 8",
-                            "add64 r3, r4",
-                            "ldxdw r3, [r3 + 0]",
-                            // Store in r7 and advance input cursor
-                            "stxdw [r7 + 0], r3",
-                            "add64 r1, 8",
-                            // Move to next account slot
-                            "add64 r7, 8",
+        let is_first_account = is_first_in_program && remaining == total;
+        let next =
+            generate_account_tree(remaining - 1, total, is_first_in_program, suppress_return);
 
-                            options(nostack),
-                        };
+        if is_first_account {
+            quote! {
+                //#[cfg(target_os = "solana")]
+                core::arch::asm! {
+                    // FIRST ACCOUNT - Store account ptr and load account data len
+                    "stxdw [r7 + 0], r1",
+                    "ldxdw r8, [r1 + 80 + 8]",
+                    // Advance input cursor by static data, account data, and round up to next 8
+                    "add64 r1, {account_total}",
+                    "add64 r1, r8",
+                    "and64 r1, 0xFFFFFFFFFFFFFFF8",
+                    // Move to next account slot
+                    "add64 r7, 8",
 
-                        // INLINED TAIL CALL - full remaining tree
-                        #next_tree
+                    account_total = const TOTAL_ACCOUNT_DATA_TO_SKIP,
+                    options(nostack),
+                };
+
+                // Continue with remaining accounts
+                #next
+            }
+        } else {
+            quote! {
+                //#[cfg(target_os = "solana")]
+                core::arch::asm! {
+                    // Load dup marker and check
+                    "ldxb r3, [r1 + 8]",
+                    "jne r3, 255, {dup}",
+                    dup = label {
+                        unsafe {
+                            // DUP PATH
+                            //#[cfg(target_os = "solana")]
+                            core::arch::asm! {
+                                // Load index byte
+                                "ldxb r3, [r1 + 0]",
+                                // Calculate index, load account into r3
+                                "mul64 r3, 8",
+                                "add64 r3, r4",
+                                "ldxdw r3, [r3 + 0]",
+                                // Store in r7 and advance input cursor
+                                "stxdw [r7 + 0], r3",
+                                "add64 r1, 8",
+                                // Move to next account slot
+                                "add64 r7, 8",
+
+                                options(nostack),
+                            };
+
+                            // Inlined tail for remaining accounts
+                            #next
+                        }
                     }
-                }
-            };
+                };
 
-            // NONDUP PATH
-            //#[cfg(target_os = "solana")]
-            core::arch::asm! {
-                // Store account ptr and load account data len
-                "stxdw [r7 + 0], r1",
-                "ldxdw r8, [r1 + 80 + 8]",
-                // Advance input cursor by static data, account data, and round up to next 8
-                "add64 r1, {account_total}",
-                "add64 r1, r8",
-                "and64 r1, 0xFFFFFFFFFFFFFFF8",
-                // Move to next account slot
-                "add64 r7, 8",
+                // Non-dup path
+                //#[cfg(target_os = "solana")]
+                core::arch::asm! {
+                    // Store account ptr and load account data len
+                    "stxdw [r7 + 0], r1",
+                    "ldxdw r8, [r1 + 80 + 8]",
+                    // Advance input cursor by static data, account data, and round up to next 8
+                    "add64 r1, {account_total}",
+                    "add64 r1, r8",
+                    "and64 r1, 0xFFFFFFFFFFFFFFF8",
+                    // Move to next account slot
+                    "add64 r7, 8",
 
-                account_total = const TOTAL_ACCOUNT_DATA_TO_SKIP,
-                options(nostack),
-            };
+                    account_total = const TOTAL_ACCOUNT_DATA_TO_SKIP,
+                    options(nostack),
+                };
 
-            // INLINED TAIL CALL - full remaining tree
-            #next_tree
+                // Inlined tail for remaining accounts
+                #next
+            }
         }
     }
+}
+
+#[proc_macro]
+pub fn entrypoint_process_batched(input: TokenStream) -> TokenStream {
+    let BatchedInput {
+        total_expr,
+        batch_size,
+        ..
+    } = parse_macro_input!(input as BatchedInput);
+
+    // batch_size literal → usize
+    let batch_val = batch_size
+        .base10_parse::<usize>()
+        .expect("batch_size must be integer literal");
+    let max_lit = {
+        let max = batch_val - 1;
+        syn::LitInt::new(&max.to_string(), batch_size.span())
+    };
+
+    // Pre-generate batch trees without returns
+    let first_tree = generate_account_tree(batch_val, batch_val, true, false);
+    let loop_tree = generate_account_tree(batch_val, batch_val, false, false);
+
+    let expanded = quote! {{
+        let total = #total_expr;
+        let mut num_full_batches_remaining = total / #batch_val -1;
+        let remainder        = total % #batch_val;
+
+        // First batch
+        let a = { #[inline(always)] || { #first_tree } };
+        a();
+
+
+        // Remaining full batches
+        while num_full_batches_remaining > 0{
+            num_full_batches_remaining -= 1;
+            let a = { #[inline(always)] || { #loop_tree } };
+            a();
+        }
+
+        // Tail dispatch for remainder
+        binary_tree_dispatch!(remainder, #max_lit, entrypoint_process_remainder);
+    }};
+
+    expanded.into()
+}
+
+#[proc_macro]
+pub fn entrypoint_process_remainder(input: TokenStream) -> TokenStream {
+    // remainder is always a literal here
+    let total = parse_macro_input!(input as LitInt)
+        .base10_parse::<usize>()
+        .unwrap();
+
+    // Generate a tree that WILL return at the end
+    let tree = generate_account_tree(total, total, false, false);
+
+    let result = quote! {{
+        #tree
+    }};
+    result.into()
 }
