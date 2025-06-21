@@ -15,7 +15,7 @@ fn main() {
     let payer = Pubkey::new_unique();
     svm.airdrop(&payer, 1_000_000_000).unwrap();
 
-    for n in [0, 1, 2, 4, 8, 16, 32, 64] {
+    for n in [0, 1, 2, 4, 8, 9 /* 16, 32, 64 */] {
         println!("\nFor {n} accounts:");
         // nondup;
         let ixn = Instruction {
@@ -43,7 +43,7 @@ fn main() {
         }
     }
 
-    for n in [2, 4, 8, 16, 32, 64] {
+    for n in [2, 4, 8, 9 /* 16, 32, 64 */] {
         println!("\nFor {n} dup accounts:");
         // nondup;
         let ixn = Instruction {
