@@ -30,7 +30,8 @@ pub unsafe extern "C" fn entrypoint(mut input: *mut u8) -> u32 {
         // Load num accounts (r9 will be used to move into num_accounts stack..)
         "ldxdw r9, [r1 + 0]",
         "mov64 r5, r9",
-
+        // Advance input cursor by num accounts
+        "add64 r1, 8",
         // Initialize accounts cursor
         "lddw r7, {accounts_ptr}",
 
@@ -56,7 +57,7 @@ pub unsafe extern "C" fn entrypoint(mut input: *mut u8) -> u32 {
         "2:",
         // Otherwise, increment account cursor, load dup marker, jump to dup if dup
         "add64 r7, 8",
-        "ldxb r6, [r1 + 8]",
+        "ldxb r6, [r1 + 0]",
         "jne r6, 255, 5f",
 
         // Non-duplicate account case
@@ -91,7 +92,6 @@ pub unsafe extern "C" fn entrypoint(mut input: *mut u8) -> u32 {
 
         // Finished
         "6:",
-        "add64 r1, 8",
 
 
         inout("r1") input,
